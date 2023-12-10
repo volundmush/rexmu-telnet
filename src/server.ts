@@ -52,7 +52,7 @@ export class TelnetServer {
 
 export class ServerManager {
     private readonly servers: Map<number, TelnetServer> = new Map<number, TelnetServer>();
-    private readonly clients: TelnetProtocol[] = [];
+    private readonly clients: Map<string, TelnetProtocol> = new Map<string, TelnetProtocol>();
     private task?: Promise<void[]>;
 
     public addServer(options: Deno.ListenTlsOptions) {
@@ -83,21 +83,22 @@ export class ServerManager {
     }
 
     public broadcast(message: string) {
-        for (const client of this.clients) {
+        for (const client of this.clients.values()) {
             client.sendText(message);
         }
     }
 
     public addClient(client: TelnetProtocol) {
         log.info(`${client}: New connection.`);
-        this.clients.push(client);
+        this.clients.set(client.getName(), client);
     }
 
     public removeClient(client: TelnetProtocol) {
-        const index = this.clients.indexOf(client);
-        if (index > -1) {
-            this.clients.splice(index, 1);
-        }
+        this.clients.delete(client.getName());
         log.info(`${client}: Connection closed.`);
+    }
+
+    public getClient(client: string) {
+        return this.clients.get(client);
     }
 }

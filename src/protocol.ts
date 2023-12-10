@@ -2,7 +2,7 @@ import {TelnetCode} from "./codes.ts";
 import {TelnetMessage, TelnetMessageType} from "./codec.ts";
 import {TelnetIncomingTransformer, TelnetOutgoingTransformer } from "./transform.ts";
 import {ServerManager, TelnetServer} from "./server.ts";
-import {Awaitable, appendBytes, scanForLineEndings, convertBufferToString} from "./utils.ts";
+import {Awaitable, appendBytes, scanForLineEndings, convertBufferToString, generateTelnetName} from "./utils.ts";
 import {log} from "../deps.ts";
 
 enum Color {
@@ -293,11 +293,18 @@ export class TelnetProtocol {
     private buffer = new Uint8Array(0);
     private wsDiedAwaitable?: Awaitable;
     private sessionData?: any;
+    private readonly name: string;
 
     constructor(conn: Deno.Conn, server: TelnetServer) {
         this.conn = conn;
         this.server = server;
         this.capabilities.encryption = server.getTLS();
+
+        let name = generateTelnetName(this.capabilities.encryption);
+        while(server.manager.getClient(name)) {
+            name = generateTelnetName(this.capabilities.encryption);
+        }
+        this.name = name;
 
         const incoming = new TransformStream<Uint8Array, TelnetMessage>(new TelnetIncomingTransformer());
         const outgoing = new TransformStream<TelnetMessage, Uint8Array>(new TelnetOutgoingTransformer());
@@ -321,6 +328,10 @@ export class TelnetProtocol {
                 this.fromGameStreamController = controller;
             }
         });
+    }
+
+    public getName(): string {
+        return this.name;
     }
 
     public getAddr(): Deno.Addr {
@@ -573,7 +584,7 @@ export class TelnetProtocol {
         this.ws.binaryType = "arraybuffer";
         this.ws.onopen = () => {
             log.info(`${this}: Websocket connected.`);
-            let outData = {"capabilities": this.capabilities};
+            let outData= {capabilities: this.capabilities, name: this.name};
             if(this.sessionData) {
                 outData = {...outData, ...{session: this.sessionData}};
             }
