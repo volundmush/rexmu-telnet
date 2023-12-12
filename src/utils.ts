@@ -83,16 +83,16 @@ export class Awaitable {
 }
 
 
-export function generateRandomString(length: number): string {
+export function generateRandomString(length: number, {prefix = ""} = {}): string {
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
     const charactersLength = characters.length;
     for (let i = 0; i < length; i++) {
         result += characters.charAt(Math.floor(Math.random() * charactersLength));
     }
-    return result;
+    return `${prefix}${result}`;
 }
 
 export function generateTelnetName(tls: boolean): string {
-    return `${tls ? "telnets" : "telnet"}-${generateRandomString(10)}`;
+    return generateRandomString(10, {prefix: `${tls ? "telnets" : "telnet"}-`});
 }

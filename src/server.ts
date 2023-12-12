@@ -1,5 +1,7 @@
 import {TelnetProtocol} from "./protocol.ts";
 import {log} from "../deps.ts";
+import {Awaitable} from "./utils.ts";
+
 
 export class TelnetServer {
     private readonly listener: Deno.Listener;
@@ -54,32 +56,55 @@ export class ServerManager {
     private readonly servers: Map<number, TelnetServer> = new Map<number, TelnetServer>();
     private readonly clients: Map<string, TelnetProtocol> = new Map<string, TelnetProtocol>();
     private task?: Promise<void[]>;
+    private quitting = false;
+    private awaitable?: Awaitable;
+    private config: Deno.ListenTlsOptions[];
 
-    public addServer(options: Deno.ListenTlsOptions) {
+    constructor(config: Deno.ListenTlsOptions[]) {
+        this.config = config;
+    }
+
+    private addServer(options: Deno.ListenTlsOptions) {
         const server = new TelnetServer(options, this);
+        const name = "telnets" ? server.getTLS() : "telnet";
+        log.info(`Loading ${name} server on ${server.getAddress()}:${server.getPort()}`);
         this.servers.set(server.getPort(), server);
     }
 
-    public getServer(port: number): TelnetServer | undefined {
-        return this.servers.get(port);
+    private getServers(): TelnetServer[] {
+        return [...this.servers.values()];
     }
 
-    public getServers(): IterableIterator<TelnetServer> {
-        return this.servers.values();
+    private loadServers() {
+        console.info("Loading servers...");
+        for (const conf of this.config) {
+            this.addServer(conf);
+        }
     }
 
     public async run() {
-        this.task = Promise.all(Array.from(this.servers.values()).map(server => server.run()));
-        await this.task
+        while(!this.quitting) {
+            this.loadServers();
+            // Create the awaitable which will be used to trigger shutdowns/reloads.
+            this.awaitable = new Awaitable();
+            console.info("Starting servers...");
+            this.task = Promise.all(Array.from(this.getServers()).map(server => server.run()));
+            await this.awaitable.getPromise();
+            for (const server of this.getServers()) {
+                server.close();
+            }
+            // Wait for all servers to close...
+            await this.task;
+            this.task = undefined;
+            this.servers.clear();
+        }
     }
 
     public async shutdown() {
-        if (this.task) {
-            for (const server of this.servers.values()) {
-                server.close();
-            }
+        this.quitting = true;
+        if(this.awaitable) {
+            this.awaitable.trigger();
         }
-        this.task = undefined;
     }
 
     public broadcast(message: string) {
@@ -100,5 +125,34 @@ export class ServerManager {
 
     public getClient(client: string) {
         return this.clients.get(client);
+    }
+
+    public registerSignalHandlers() {
+        const sig: Deno.Signal[] = (Deno.build.os === "windows") ? ["SIGINT", "SIGBREAK"] : ["SIGUSR1", "SIGINT"];
+        for (const s of sig) {
+            Deno.addSignalListener(s, () => {
+                this.signalHandler(s);
+            });
+        }
+    }
+
+    public signalHandler(sig: Deno.Signal) {
+        switch(sig) {
+            case "SIGINT":
+                log.critical(`Received ${sig}! Performing graceful shutdown...`);
+                this.shutdown();
+                break;
+            case "SIGBREAK":
+            case "SIGUSR1":
+                log.critical(`Received ${sig}! Performing reload...`);
+                this.reload();
+                break;
+        }
+    }
+
+    public reload() {
+        if(this.awaitable) {
+            this.awaitable.trigger();
+        }
     }
 }
